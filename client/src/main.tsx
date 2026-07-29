@@ -3,6 +3,14 @@ import App from "./App";
 import "./index.css";
 import { initializeAnonymousAuth } from "./lib/firebase";
 
-initializeAnonymousAuth().catch(console.error);
+async function initApp() {
+  try {
+    await initializeAnonymousAuth();
+  } catch (error) {
+    console.error("Firebase auth initialization failed:", error);
+  }
 
-createRoot(document.getElementById("root")!).render(<App />);
+  createRoot(document.getElementById("root")!).render(<App />);
+}
+
+initApp();

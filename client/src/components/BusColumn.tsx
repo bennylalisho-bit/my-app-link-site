@@ -20,7 +20,7 @@ interface BusColumnProps {
   searchQuery?: string;
   highlightedNames?: string[];
   onToggleHighlight?: (name: string) => void;
-  baseColor?: string; // הוספנו אפשרות לקבל צבע רקע
+  baseColor?: string;
 }
 
 export function BusColumn({
@@ -140,14 +140,35 @@ export function BusColumn({
         })}
       </div>
 
-      {/* --- שורת הערה תחתונה --- */}
+      {/* --- שורת הערה תחתונה (כולל העתק-הדבק במקש ימני) --- */}
       <div className={`h-8 border-t border-gray-400 ${hasMenucha ? "bg-gray-400" : "bg-yellow-50"}`}>
         <input 
           type="text" 
           value={note} 
           onChange={(e) => onNoteChange(e.target.value)} 
-          className="w-full h-full text-lg font-bold text-center bg-transparent focus:outline-none" 
+          className="w-full h-full text-lg font-bold text-center bg-transparent focus:outline-none transition-colors duration-200" 
           disabled={isReadOnly} 
+          title="מקש ימני להעתקה והדבקה"
+          onContextMenu={(e) => {
+            e.preventDefault();
+            if (isReadOnly) return;
+            
+            const copiedNote = sessionStorage.getItem("copiedBusNote");
+            
+            // אם התא ריק ויש משהו שמור בזיכרון -> הדבק
+            if (!note && copiedNote) {
+              onNoteChange(copiedNote);
+            } 
+            // אם יש טקסט בתא -> העתק אותו לזיכרון והפעל אפקט הבהוב ירוק
+            else if (note) {
+              sessionStorage.setItem("copiedBusNote", note);
+              const target = e.target as HTMLInputElement;
+              target.style.backgroundColor = "#86efac"; // ירוק בהיר שמסמן העתקה
+              setTimeout(() => {
+                target.style.backgroundColor = "transparent";
+              }, 300);
+            }
+          }}
         />
       </div>
     </div>
