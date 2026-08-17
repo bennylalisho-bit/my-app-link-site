@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import { BusColumn } from "./components/BusColumn.tsx";
 import { FloatingPool } from "./components/FloatingPool";
-import { PlusCircle, Zap, Home, Sun, PartyPopper, Share2, CloudUpload, CloudDownload, Calendar, Loader2, Lock, LogOut, Trash2, Copy, Users, Printer, KeyRound, UserCheck, Search, History, RotateCcw, X, Menu, Undo2, Eraser, Edit } from "lucide-react";
+import { PlusCircle, Zap, Home, Sun, PartyPopper, Share2, CloudUpload, CloudDownload, Calendar, Loader2, Lock, LogOut, Trash2, Copy, Users, KeyRound, UserCheck, Search, History, RotateCcw, X, Menu, Undo2, Eraser, Edit } from "lucide-react";
 import { toPng } from 'html-to-image';
 import { db } from "./lib/firebase";
 import { doc, setDoc, getDoc, updateDoc, collection, getDocs, deleteDoc, addDoc, query, orderBy, limit, onSnapshot } from "firebase/firestore";
@@ -59,17 +59,25 @@ const SignatureFooter = () => (
 type Assignments = Record<string, string>;
 type Notes = Record<string, string>;
 interface PoolGroup { names: string[]; type: 'big' | 'special' | 'small'; preferredVehicle?: string; }
-interface HistoryState { assignments: Assignments; notes: Notes; scatterPoolList: string[]; collectionPoolList: string[]; weekendPoolList: string[]; vacationPoolList: string[]; statusColumns?: string[]; }
+interface MultiPoolData { id: string; names: string[]; color: string; position: {x:number, y:number}; }
+interface HistoryState { 
+    assignments: Assignments; 
+    notes: Notes; 
+    scatterPools: MultiPoolData[]; 
+    collectionPools: MultiPoolData[]; 
+    weekendPoolList: string[]; 
+    vacationPoolList: string[]; 
+    statusColumns?: string[]; 
+}
 
 const INITIAL_USERS = [
-  { id: "309451854", name: "בני ללישו", role: "admin", password: "309451854" },
-  { id: "028639508", name: "אלון וולך", role: "editor", password: "028639508" },
-  { id: "027704311", name: "אסף שהם", role: "editor", password: "027704311" },
-  { id: "024940512", name: "שמואל גבאי", role: "editor", password: "024940512" },
-  { id: "999999999", name: "עובד כללי", role: "viewer", password: "123" }
+  { id: "309451854", name: "בני ללישו", role: "admin", password: "309451854" },
+  { id: "028639508", name: "אלון וולך", role: "editor", password: "028639508" },
+  { id: "027704311", name: "אסף שהם", role: "editor", password: "027704311" },
+  { id: "024940512", name: "שמואל גבאי", role: "editor", password: "024940512" },
+  { id: "999999999", name: "עובד כללי", role: "viewer", password: "123" }
 ];
 
-// מילון תאריכי חגים לאנימציה (לשנים 2026-2027)
 const HOLIDAYS_ISRAEL: Record<string, string> = {
   "2026-03-03": "פורים", "2026-04-01": "ליל הסדר", "2026-04-02": "פסח", "2026-04-08": "שביעי של פסח",
   "2026-04-22": "יום העצמאות", "2026-05-22": "ערב שבועות", "2026-05-23": "חג שבועות", "2026-09-11": "ראש השנה",
@@ -80,6 +88,9 @@ const HOLIDAYS_ISRAEL: Record<string, string> = {
   "2027-10-02": "ראש השנה", "2027-10-10": "ערב יום כיפור", "2027-10-11": "יום כיפור", "2027-10-15": "ערב סוכות",
   "2027-10-16": "סוכות", "2027-10-22": "ערב שמחת תורה", "2027-10-23": "שמחת תורה",
 };
+
+const SCATTER_COLORS = ["bg-blue-600", "bg-indigo-600", "bg-cyan-600", "bg-sky-600", "bg-violet-600"];
+const COLLECTION_COLORS = ["bg-orange-600", "bg-amber-600", "bg-red-500", "bg-rose-600", "bg-pink-600"];
 
 function App() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
@@ -108,7 +119,7 @@ function App() {
   const [personalNotes, setPersonalNotes] = useState("");
   const [highlightedNames, setHighlightedNames] = useState<string[]>([]);
   const [showUpdateModal, setShowUpdateModal] = useState(false);
-  const APP_VERSION = "v1.1"; // ברגע שתרצה להקפיץ עדכון חדש בעתיד, פשוט תשנה את המספר כאן (למשל ל-v1.2)
+  const APP_VERSION = "v1.2"; 
   
   useEffect(() => {
     const savedVersion = localStorage.getItem("appVersion");
@@ -116,6 +127,7 @@ function App() {
       setShowUpdateModal(true);
     }
   }, []);
+
   const [isVacationModalOpen, setIsVacationModalOpen] = useState(false);
   const [vacationRawText, setVacationRawText] = useState("");
   const [isVacationPoolOpen, setIsVacationPoolOpen] = useState(false);
@@ -163,32 +175,30 @@ function App() {
   const [holidayStatusCols, setHolidayStatusCols] = useState<string[]>([]);
   const [fridayStatusCols, setFridayStatusCols] = useState<string[]>([]);
   const [saturdayStatusCols, setSaturdayStatusCols] = useState<string[]>([]);
-const [scatterDate, setScatterDate] = useState(new Date().toISOString().split('T')[0]);
+  const [scatterDate, setScatterDate] = useState(new Date().toISOString().split('T')[0]);
   const [collectionDate, setCollectionDate] = useState("");
   
-  // הנה ה-States המתוקנים - רק אלו שצריכים להופיע:
   const [collectionNote, setCollectionNote] = useState("");
   const [isVehicleSaved, setIsVehicleSaved] = useState(false);
 
-const handleVehicleNoteChange = (val: string) => {
-  // אנחנו מניחים שהמשתמש מקליד רק את המספר, אז ננקה מה שיש לנו
-  // אם הוא מוחק הכל, נחזיר לערך הריק
-  if (val === "" || val === "רכב כוננות ") {
-    setCollectionNote("");
-    return;
-  }
+  // חלונות מרובים (זמני)
+  const [scatterPools, setScatterPools] = useState<MultiPoolData[]>([]);
+  const [collectionPools, setCollectionPools] = useState<MultiPoolData[]>([]);
 
-  // ננקה את הטקסט מהמילה הקבועה כדי להוציא רק את המספרים
-  const rawNumber = val.replace("רכב כוננות ", "");
-  setCollectionNote(val);
-
-  // אם יש 3 ספרות, שומרים
-  if (rawNumber.length === 3) {
-    updateFirebaseLive({ collectionNote: val });
-    setIsVehicleSaved(true);
-    setTimeout(() => setIsVehicleSaved(false), 500);
-  }
-};
+  const handleVehicleNoteChange = (val: string) => {
+    if (val === "" || val === "רכב כוננות ") {
+      setCollectionNote("");
+      return;
+    }
+    const rawNumber = val.replace("רכב כוננות ", "");
+    setCollectionNote(val);
+    if (rawNumber.length === 3) {
+      updateFirebaseLive({ collectionNote: val });
+      setIsVehicleSaved(true);
+      setTimeout(() => setIsVehicleSaved(false), 500);
+    }
+  };
+  
   const [scatterGeneralNote, setScatterGeneralNote] = useState("");
   const [holidayDate, setHolidayDate] = useState(new Date().toISOString().split('T')[0]);
   const [fridayDate, setFridayDate] = useState(new Date().toISOString().split('T')[0]);
@@ -213,14 +223,11 @@ const handleVehicleNoteChange = (val: string) => {
 
   const [assignments, setAssignments] = useState<Assignments>({});
   const [notes, setNotes] = useState<Notes>({});
-  const [isScatterPoolOpen, setIsScatterPoolOpen] = useState(false);
-  const [scatterPoolList, setScatterPoolList] = useState<string[]>([]);
-  const [isCollectionPoolOpen, setIsCollectionPoolOpen] = useState(false);
-  const [collectionPoolList, setCollectionPoolList] = useState<string[]>([]);
   const [isWeekendPoolOpen, setIsWeekendPoolOpen] = useState(false);
   const [weekendPoolList, setWeekendPoolList] = useState<string[]>([]);
   const [selectedWeekendNames, setSelectedWeekendNames] = useState<string[]>([]);
   const [isGlobalPoolOpen, setIsGlobalPoolOpen] = useState(false);
+  
   const [selectedScatterNames, setSelectedScatterNames] = useState<string[]>([]);
   const [selectedCollectionNames, setSelectedCollectionNames] = useState<string[]>([]);
   const [selectedGlobalNames, setSelectedGlobalNames] = useState<string[]>([]);
@@ -237,7 +244,7 @@ const handleVehicleNoteChange = (val: string) => {
     const savedUser = localStorage.getItem("currentUser");
     if (savedUser) { setIsLoggedIn(true); setCurrentUser(JSON.parse(savedUser)); setShowLoginModal(false); }
     initializeUsers();
-}, [collectionNote]);
+  }, [collectionNote]);
 
   useEffect(() => {
     const today = new Date();
@@ -272,8 +279,14 @@ const handleVehicleNoteChange = (val: string) => {
         if(d.scatterGeneralNote) setScatterGeneralNote(d.scatterGeneralNote || "");
         if(d.personalNotes) setPersonalNotes(d.personalNotes);
         if(d.holidayDaysCount) setHolidayDaysCount(d.holidayDaysCount);
-        if(d.scatterPoolList) setScatterPoolList(d.scatterPoolList);
-        if(d.collectionPoolList) setCollectionPoolList(d.collectionPoolList);
+        
+        // התאמה למאגרים המרובים מול גרסאות ישנות
+        if(d.scatterPools) { setScatterPools(d.scatterPools); } 
+        else if (d.scatterPoolList?.length > 0) { setScatterPools([{id: 'migrated', names: d.scatterPoolList, color: 'bg-blue-600', position: {x: 50, y: 150}}]); }
+        
+        if(d.collectionPools) { setCollectionPools(d.collectionPools); } 
+        else if (d.collectionPoolList?.length > 0) { setCollectionPools([{id: 'migrated', names: d.collectionPoolList, color: 'bg-orange-600', position: {x: window.innerWidth - 300, y: 150}}]); }
+
         if(d.weekendPoolList) setWeekendPoolList(d.weekendPoolList);
         if(d.vacationPoolList) setVacationPoolList(d.vacationPoolList || []); 
         if (d.lastSavedBy && d.lastSavedAt) setLastSavedInfo(`נשמר לאחרונה ע"י ${d.lastSavedBy} ב-${d.lastSavedAt}`);
@@ -286,8 +299,10 @@ const handleVehicleNoteChange = (val: string) => {
     if (isHistoryMode) return;
     setUndoStack(prev => {
         const newState: HistoryState = {
-            assignments: { ...assignments }, notes: { ...notes }, scatterPoolList: [...scatterPoolList],
-            collectionPoolList: [...collectionPoolList], weekendPoolList: [...weekendPoolList], vacationPoolList: [...vacationPoolList],
+            assignments: { ...assignments }, notes: { ...notes }, 
+            scatterPools: [...scatterPools],
+            collectionPools: [...collectionPools], 
+            weekendPoolList: [...weekendPoolList], vacationPoolList: [...vacationPoolList],
             statusColumns: [...statusColumns]
         };
         const newStack = [...prev, newState];
@@ -299,8 +314,10 @@ const handleVehicleNoteChange = (val: string) => {
   const handleUndo = () => {
     if (undoStack.length === 0) return;
     const lastState = undoStack[undoStack.length - 1];
-    setAssignments(lastState.assignments); setNotes(lastState.notes); setScatterPoolList(lastState.scatterPoolList);
-    setCollectionPoolList(lastState.collectionPoolList); setWeekendPoolList(lastState.weekendPoolList || []);
+    setAssignments(lastState.assignments); setNotes(lastState.notes); 
+    setScatterPools(lastState.scatterPools || []);
+    setCollectionPools(lastState.collectionPools || []); 
+    setWeekendPoolList(lastState.weekendPoolList || []);
     setVacationPoolList(lastState.vacationPoolList || []); 
     if(lastState.statusColumns) setStatusColumns(lastState.statusColumns);
     setUndoStack(prev => prev.slice(0, -1));
@@ -313,15 +330,130 @@ const handleVehicleNoteChange = (val: string) => {
     } else { alert("יש להתחבר למצב עריכה"); }
   };
 
-const updateFirebaseLive = async (newData: any) => {
+  const updateFirebaseLive = async (newData: any) => {
     if (isHistoryMode) return;
     try {
       const saveTime = new Date().toLocaleString('he-IL');
-      // משתמשים ב-merge כדי לא למחוק נתונים אחרים בטעות
-     await updateDoc(doc(db, "schedules", "main_schedule"), { ...newData, lastSavedBy: currentUser?.name || "לא ידוע", lastSavedAt: saveTime }, { merge: true });
+      await updateDoc(doc(db, "schedules", "main_schedule"), { ...newData, lastSavedBy: currentUser?.name || "לא ידוע", lastSavedAt: saveTime }, { merge: true });
     } catch (e) { console.error("Live update error:", e); }
   };
 
+  // ---- פונקציות לניהול חלונות מרובים (זמני) ----
+  const openMultiPool = (type: 'scatter' | 'collection') => {
+    saveCheckpoint();
+    if (type === 'scatter') {
+        const newPool: MultiPoolData = {
+            id: Date.now().toString(),
+            names: [],
+            color: SCATTER_COLORS[scatterPools.length % SCATTER_COLORS.length],
+            position: { x: 50 + scatterPools.length * 30, y: 150 + scatterPools.length * 30 }
+        };
+        const newPools = [...scatterPools, newPool];
+        setScatterPools(newPools);
+        updateFirebaseLive({ scatterPools: newPools });
+    } else {
+        const newPool: MultiPoolData = {
+            id: Date.now().toString(),
+            names: [],
+            color: COLLECTION_COLORS[collectionPools.length % COLLECTION_COLORS.length],
+            position: { x: Math.max(0, window.innerWidth - 300 - collectionPools.length * 30), y: 150 + collectionPools.length * 30 }
+        };
+        const newPools = [...collectionPools, newPool];
+        setCollectionPools(newPools);
+        updateFirebaseLive({ collectionPools: newPools });
+    }
+  };
+
+  const closeMultiPool = (type: 'scatter' | 'collection', poolId: string) => {
+    saveCheckpoint();
+    if (type === 'scatter') {
+        const newPools = scatterPools.filter(p => p.id !== poolId);
+        setScatterPools(newPools);
+        updateFirebaseLive({ scatterPools: newPools });
+    } else {
+        const newPools = collectionPools.filter(p => p.id !== poolId);
+        setCollectionPools(newPools);
+        updateFirebaseLive({ collectionPools: newPools });
+    }
+  };
+
+  const removeNameFromMultiPool = (type: 'scatter' | 'collection', poolId: string, name: string) => {
+    saveCheckpoint();
+    if (type === 'scatter') {
+        const newPools = scatterPools.map(p => p.id === poolId ? { ...p, names: p.names.filter(n => n !== name) } : p);
+        setScatterPools(newPools);
+        updateFirebaseLive({ scatterPools: newPools });
+    } else {
+        const newPools = collectionPools.map(p => p.id === poolId ? { ...p, names: p.names.filter(n => n !== name) } : p);
+        setCollectionPools(newPools);
+        updateFirebaseLive({ collectionPools: newPools });
+    }
+  };
+
+  const clearMultiPool = (type: 'scatter' | 'collection', poolId: string) => {
+    saveCheckpoint();
+    if (type === 'scatter') {
+        const newPools = scatterPools.map(p => p.id === poolId ? { ...p, names: [] } : p);
+        setScatterPools(newPools);
+        updateFirebaseLive({ scatterPools: newPools });
+    } else {
+        const newPools = collectionPools.map(p => p.id === poolId ? { ...p, names: [] } : p);
+        setCollectionPools(newPools);
+        updateFirebaseLive({ collectionPools: newPools });
+    }
+  };
+
+  const addManualNameToMultiPool = (type: 'scatter' | 'collection', poolId: string, name: string) => {
+    if (!name.trim()) return;
+    saveCheckpoint();
+    if (type === 'scatter') {
+        const newPools = scatterPools.map(p => p.id === poolId ? { ...p, names: [...p.names, name] } : p);
+        setScatterPools(newPools);
+        updateFirebaseLive({ scatterPools: newPools });
+    } else {
+        const newPools = collectionPools.map(p => p.id === poolId ? { ...p, names: [...p.names, name] } : p);
+        setCollectionPools(newPools);
+        updateFirebaseLive({ collectionPools: newPools });
+    }
+  };
+
+  const dropToMultiPool = (type: 'scatter' | 'collection', poolId: string) => {
+    if (!isLoggedIn || currentUser?.role === 'viewer') return;
+    let selectedNames = type === 'scatter' ? selectedScatterNames : selectedCollectionNames;
+    if (selectedNames.length === 0) return;
+    
+    saveCheckpoint();
+    const newAssignments = { ...assignments };
+    let prefixToCheck: string | string[] = type === 'scatter' ? 'scat-' : 'col-';
+    
+    Object.keys(newAssignments).forEach(key => { 
+        let match = false;
+        if (Array.isArray(prefixToCheck)) {
+            match = prefixToCheck.some(p => key.startsWith(p));
+        } else {
+            match = key.startsWith(prefixToCheck) || (type === 'collection' && key.startsWith('stat-'));
+        }
+        if (match && selectedNames.includes(newAssignments[key])) { 
+            delete newAssignments[key]; 
+        } 
+    });
+    
+    setAssignments(newAssignments);
+    
+    if (type === 'scatter') { 
+        const newPools = scatterPools.map(p => p.id === poolId ? { ...p, names: [...p.names, ...selectedNames] } : p);
+        setScatterPools(newPools); 
+        setSelectedScatterNames([]); 
+        updateFirebaseLive({ assignments: newAssignments, scatterPools: newPools });
+    } else { 
+        const newPools = collectionPools.map(p => p.id === poolId ? { ...p, names: [...p.names, ...selectedNames] } : p);
+        setCollectionPools(newPools); 
+        setSelectedCollectionNames([]); 
+        updateFirebaseLive({ assignments: newAssignments, collectionPools: newPools });
+    }
+  };
+
+  // ---- פונקציות עזר ----
   const handleScatterDateChange = (val: string) => {
     checkAuth(() => {
       setScatterDate(val);
@@ -339,18 +471,8 @@ const updateFirebaseLive = async (newData: any) => {
   };
 
   const handleCollectionDateChange = (val: string) => { checkAuth(() => { setCollectionDate(val); updateFirebaseLive({ collectionDate: val }); }); };
-const handleFridayDateChange = (val: string) => {
-    checkAuth(() => {
-      setFridayDate(val);
-      updateFirebaseLive({ fridayDate: val });
-    });
-  };
- const handleHolidayDateChange = (val: string) => {
-    checkAuth(() => {
-      setHolidayDate(val);
-      updateFirebaseLive({ holidayDate: val });
-    });
-  };
+  const handleFridayDateChange = (val: string) => { checkAuth(() => { setFridayDate(val); updateFirebaseLive({ fridayDate: val }); }); };
+  const handleHolidayDateChange = (val: string) => { checkAuth(() => { setHolidayDate(val); updateFirebaseLive({ holidayDate: val }); }); };
 
   const handleAddHolidayTable = () => {
     if (!isLoggedIn || currentUser?.role === 'viewer') return;
@@ -359,6 +481,7 @@ const handleFridayDateChange = (val: string) => {
     setHolidayDaysCount(newCount);
     updateFirebaseLive({ holidayDaysCount: newCount });
   };
+
   const handleAssign = async (key: string, name: string) => {
     checkAuth(async () => {
       setAssignments(prev => { const newAssign = { ...prev, [key]: name }; updateFirebaseLive({ [`assignments.${key}`]: name }); return newAssign; });
@@ -420,15 +543,24 @@ const handleFridayDateChange = (val: string) => {
     window.open("https://main.timetable.co.il/Structure/mainpage.aspx", "TimetableWindow", `width=${width},height=${height},left=${left},top=${top},menubar=no,toolbar=no,location=no,status=no,scrollbars=yes`);
   };
 
-  const sortColumnsWithData = (cols: string[], currentAssign: Assignments, currentNotes: Notes) => {
-    const orderMap: Record<string, number> = { "חופש": 1, "מילואים": 2, "עצמאי": 3 };
-    const mapped = cols.map((title, index) => ({ title, originalIndex: index }));
+  // פונקציית המיון הקבועה לעמודות הסטטוס (חופש ימין, עצמאי, מילואים, תפקיד וכו')
+  const getColumnWeight = (title: string) => {
+    if (title === "חופש") return 4;
+    if (title === "עצמאי") return 3;
+    if (title === "מילואים") return 2;
+    if (title === "תפקיד") return 1;
+    return 0; // השאר משמאל
+  };
+
+  const reorderStatusColumns = (currentCols: string[], currentAssign: Assignments, currentNotes: Notes) => {
+    const mapped = currentCols.map((title, index) => ({ title, originalIndex: index }));
     mapped.sort((a, b) => {
-      const orderA = orderMap[a.title] || 999;
-      const orderB = orderMap[b.title] || 999;
-      if (orderA !== orderB) return orderA - orderB;
-      return a.title.localeCompare(b.title);
+        const wA = getColumnWeight(a.title);
+        const wB = getColumnWeight(b.title);
+        if (wA !== wB) return wA - wB; 
+        return a.originalIndex - b.originalIndex; 
     });
+
     const newCols = mapped.map(m => m.title);
     const newAssign: Assignments = { ...currentAssign };
     const newN: Notes = { ...currentNotes };
@@ -437,12 +569,12 @@ const handleFridayDateChange = (val: string) => {
     Object.keys(currentNotes).forEach(key => { if (key.startsWith("stat-")) delete newN[key]; });
     
     mapped.forEach((item, newIndex) => {
-      const oldPrefix = `stat-${item.originalIndex}`;
-      const newPrefix = `stat-${newIndex}`;
-      if (currentNotes[oldPrefix]) newN[newPrefix] = currentNotes[oldPrefix];
-      for (let r = 1; r <= 10; r++) {
-        if (currentAssign[`${oldPrefix}-${r}`]) newAssign[`${newPrefix}-${r}`] = currentAssign[`${oldPrefix}-${r}`];
-      }
+        const oldPrefix = `stat-${item.originalIndex}`;
+        const newPrefix = `stat-${newIndex}`;
+        if (currentNotes[oldPrefix]) newN[newPrefix] = currentNotes[oldPrefix];
+        for (let r = 1; r <= 10; r++) {
+            if (currentAssign[`${oldPrefix}-${r}`]) newAssign[`${newPrefix}-${r}`] = currentAssign[`${oldPrefix}-${r}`];
+        }
     });
     return { newCols, newAssign, newN };
   };
@@ -579,35 +711,32 @@ const handleFridayDateChange = (val: string) => {
       }
     });
 
-    setStatusColumns(finalCols); setAssignments(newAssignments); setNotes(newNotes);
+    // הפעלת מיון אוטומטי לעמודות הנוכחות בסיום שיבוץ חופשות!
+    const { newCols: sortedCols, newAssign: sortedAssign, newN: sortedNotes } = reorderStatusColumns(finalCols, newAssignments, newNotes);
+
+    setStatusColumns(sortedCols); setAssignments(sortedAssign); setNotes(sortedNotes);
     setVacationPoolList([]); setVacationStatuses({});
 
-    updateFirebaseLive({ statusColumns: finalCols, assignments: newAssignments, notes: newNotes, vacationPoolList: [] });
+    updateFirebaseLive({ statusColumns: sortedCols, assignments: sortedAssign, notes: sortedNotes, vacationPoolList: [] });
     setIsVacationPoolOpen(false);
     setIsGlobalPoolOpen(true); 
-    alert(`העובדים שובצו בהצלחה!\nעמודות החופש והמילואים מוקמו בימין.\nעובדים שחזרו נוקו מהחופשות והועברו ל'מי לא שובץ'.`);
+    alert(`העובדים שובצו בהצלחה!\nעמודות החופש והמילואים סודרו בימין.\nעובדים שחזרו נוקו מהחופשות והועברו ל'מי לא שובץ'.`);
   };
 
   const removeFromPool = (type: 'scatter' | 'collection' | 'weekend' | 'vacation', name: string) => checkAuth(() => {
      let newPool = [];
-     if(type === 'scatter') { newPool = scatterPoolList.filter(n => n !== name); setScatterPoolList(newPool); updateFirebaseLive({ scatterPoolList: newPool }); }
-     else if (type === 'collection') { newPool = collectionPoolList.filter(n => n !== name); setCollectionPoolList(newPool); updateFirebaseLive({ collectionPoolList: newPool }); }
-     else if (type === 'weekend') { newPool = weekendPoolList.filter(n => n !== name); setWeekendPoolList(newPool); updateFirebaseLive({ weekendPoolList: newPool }); }
+     if (type === 'weekend') { newPool = weekendPoolList.filter(n => n !== name); setWeekendPoolList(newPool); updateFirebaseLive({ weekendPoolList: newPool }); }
      else if (type === 'vacation') { newPool = vacationPoolList.filter(n => n !== name); setVacationPoolList(newPool); updateFirebaseLive({ vacationPoolList: newPool }); }
   });
 
   const clearPool = (type: 'scatter' | 'collection' | 'weekend' | 'vacation') => checkAuth(() => {
-     if(type === 'scatter') { setScatterPoolList([]); updateFirebaseLive({ scatterPoolList: [] }); }
-     else if (type === 'collection') { setCollectionPoolList([]); updateFirebaseLive({ collectionPoolList: [] }); }
-     else if (type === 'weekend') { setWeekendPoolList([]); updateFirebaseLive({ weekendPoolList: [] }); }
+     if (type === 'weekend') { setWeekendPoolList([]); updateFirebaseLive({ weekendPoolList: [] }); }
      else if (type === 'vacation') { setVacationPoolList([]); updateFirebaseLive({ vacationPoolList: [] }); }
   });
 
   const handleAddManualName = (name: string, type: 'scatter' | 'collection' | 'weekend' | 'vacation') => {
     if (!name.trim()) return; saveCheckpoint();
-    if (type === 'scatter') { const newPool = [...scatterPoolList, name]; setScatterPoolList(newPool); updateFirebaseLive({ scatterPoolList: newPool }); }
-    else if (type === 'collection') { const newPool = [...collectionPoolList, name]; setCollectionPoolList(newPool); updateFirebaseLive({ collectionPoolList: newPool }); }
-    else if (type === 'weekend') { const newPool = [...weekendPoolList, name]; setWeekendPoolList(newPool); updateFirebaseLive({ weekendPoolList: newPool }); }
+    if (type === 'weekend') { const newPool = [...weekendPoolList, name]; setWeekendPoolList(newPool); updateFirebaseLive({ weekendPoolList: newPool }); }
     else if (type === 'vacation') { const newPool = [...vacationPoolList, name]; setVacationPoolList(newPool); updateFirebaseLive({ vacationPoolList: newPool }); }
   };
 
@@ -639,20 +768,20 @@ const handleFridayDateChange = (val: string) => {
               if(historyItem.collectionDate) { setCollectionDate(historyItem.collectionDate); updates.collectionDate = historyItem.collectionDate; }
               if(historyItem.holidayDate) { setHolidayDate(historyItem.holidayDate); updates.holidayDate = historyItem.holidayDate; }
               if(historyItem.fridayDate) { setFridayDate(historyItem.fridayDate); updates.fridayDate = historyItem.fridayDate; }
-              if(historyItem.scatterPoolList) { setScatterPoolList(historyItem.scatterPoolList); updates.scatterPoolList = historyItem.scatterPoolList; }
-              if(historyItem.collectionPoolList) { setCollectionPoolList(historyItem.collectionPoolList); updates.collectionPoolList = historyItem.collectionPoolList; }
+              if(historyItem.scatterPools) { setScatterPools(historyItem.scatterPools); updates.scatterPools = historyItem.scatterPools; }
+              if(historyItem.collectionPools) { setCollectionPools(historyItem.collectionPools); updates.collectionPools = historyItem.collectionPools; }
               if(historyItem.weekendPoolList) { setWeekendPoolList(historyItem.weekendPoolList); updates.weekendPoolList = historyItem.weekendPoolList; }
               if(historyItem.vacationPoolList) { setVacationPoolList(historyItem.vacationPoolList); updates.vacationPoolList = historyItem.vacationPoolList; }
           } else if (type === 'scatter') {
               clearKeys(['scat-']); copyKeys(['scat-'], historyItem.assignments, historyItem.notes);
               if(historyItem.scatterVehicles) { setScatterVehicles(historyItem.scatterVehicles); updates.scatterVehicles = historyItem.scatterVehicles; }
               if(historyItem.scatterDate) { setScatterDate(historyItem.scatterDate); updates.scatterDate = historyItem.scatterDate; }
-              if(historyItem.scatterPoolList) { setScatterPoolList(historyItem.scatterPoolList); updates.scatterPoolList = historyItem.scatterPoolList; }
+              if(historyItem.scatterPools) { setScatterPools(historyItem.scatterPools); updates.scatterPools = historyItem.scatterPools; }
           } else if (type === 'collection') {
               clearKeys(['col-', 'stat-']); copyKeys(['col-', 'stat-'], historyItem.assignments, historyItem.notes);
               if(historyItem.collectionVehicles) { setCollectionVehicles(historyItem.collectionVehicles); updates.collectionVehicles = historyItem.collectionVehicles; }
               if(historyItem.statusColumns) { setStatusColumns(historyItem.statusColumns); updates.statusColumns = historyItem.statusColumns; }
-              if(historyItem.collectionPoolList) { setCollectionPoolList(historyItem.collectionPoolList); updates.collectionPoolList = historyItem.collectionPoolList; }
+              if(historyItem.collectionPools) { setCollectionPools(historyItem.collectionPools); updates.collectionPools = historyItem.collectionPools; }
           } else if (type === 'holiday') {
               clearKeys(['hol-']); copyKeys(['hol-'], historyItem.assignments, historyItem.notes);
               if(historyItem.holidayVehicles) { setHolidayVehicles(historyItem.holidayVehicles); updates.holidayVehicles = historyItem.holidayVehicles; }
@@ -753,29 +882,9 @@ const handleFridayDateChange = (val: string) => {
       const t = prompt("שם העמודה:");
       if (t) {
         saveCheckpoint();
-        const lastIdx = statusColumns.lastIndexOf(t);
-        let newCols = [...statusColumns];
-        let insertIdx = newCols.length;
-        if (lastIdx !== -1) { insertIdx = lastIdx + 1; newCols.splice(insertIdx, 0, t); } 
-        else { newCols.push(t); }
-
-        const newAssign = { ...assignments }; const newN = { ...notes };
-        Object.keys(assignments).forEach(key => { if (key.startsWith("stat-")) delete newAssign[key]; });
-        Object.keys(notes).forEach(key => { if (key.startsWith("stat-")) delete newN[key]; });
-
-        const oldIndices = statusColumns.map((_, i) => i);
-        if (lastIdx !== -1) { oldIndices.splice(insertIdx, 0, -1); } 
-        else { oldIndices.push(-1); }
-
-        oldIndices.forEach((oldIdx, newIndex) => {
-          if (oldIdx === -1) return;
-          const oldPrefix = `stat-${oldIdx}`; const newPrefix = `stat-${newIndex}`;
-          if (notes[oldPrefix]) newN[newPrefix] = notes[oldPrefix];
-          for (let r = 1; r <= 10; r++) {
-            if (assignments[`${oldPrefix}-${r}`]) newAssign[`${newPrefix}-${r}`] = assignments[`${oldPrefix}-${r}`];
-          }
-        });
-
+        const newColsRaw = [...statusColumns, t];
+        // סידור אוטומטי (חופש ימין וכו') לאחר הוספת העמודה החדשה
+        const { newCols, newAssign, newN } = reorderStatusColumns(newColsRaw, assignments, notes);
         setStatusColumns(newCols); setAssignments(newAssign); setNotes(newN);
         updateFirebaseLive({ statusColumns: newCols, assignments: newAssign, notes: newN });
       }
@@ -1037,19 +1146,19 @@ const handleFridayDateChange = (val: string) => {
       }
     });
     
-    let newScatterPool = [...scatterPoolList];
-    let newCollectionPool = [...collectionPoolList];
+    let newScatterPools = [...scatterPools];
+    let newCollectionPools = [...collectionPools];
     let newWeekendPool = [...weekendPoolList];
     let newVacationPool = [...vacationPoolList];
 
-    if (context === 'scatter' && newScatterPool.some(n => selectedNames.includes(n))) {
-      newScatterPool = newScatterPool.filter(n => !selectedNames.includes(n));
-      setScatterPoolList(newScatterPool);
+    if (context === 'scatter') {
+      newScatterPools = newScatterPools.map(pool => ({ ...pool, names: pool.names.filter(n => !selectedNames.includes(n)) }));
+      setScatterPools(newScatterPools);
       didChange = true;
     }
-    if (context === 'collection' && newCollectionPool.some(n => selectedNames.includes(n))) {
-      newCollectionPool = newCollectionPool.filter(n => !selectedNames.includes(n));
-      setCollectionPoolList(newCollectionPool);
+    if (context === 'collection') {
+      newCollectionPools = newCollectionPools.map(pool => ({ ...pool, names: pool.names.filter(n => !selectedNames.includes(n)) }));
+      setCollectionPools(newCollectionPools);
       didChange = true;
     }
     if (context === 'weekend' && newWeekendPool.some(n => selectedNames.includes(n))) {
@@ -1073,8 +1182,8 @@ const handleFridayDateChange = (val: string) => {
        setAssignments(newAssignments);
        updateFirebaseLive({ 
            assignments: newAssignments, 
-           scatterPoolList: newScatterPool,
-           collectionPoolList: newCollectionPool,
+           scatterPools: newScatterPools,
+           collectionPools: newCollectionPools,
            weekendPoolList: newWeekendPool,
            vacationPoolList: newVacationPool
        });
@@ -1085,62 +1194,6 @@ const handleFridayDateChange = (val: string) => {
     setSelectedWeekendNames([]);
     setSelectedGlobalNames([]);
     setSelectedVacationNames([]);
-  };
-
-  const handleDropToPool = (type: 'scatter' | 'collection' | 'weekend' | 'vacation') => {
-    if (!isLoggedIn || currentUser?.role === 'viewer') return;
-    let selectedNames: string[] = [];
-    if (type === 'scatter') selectedNames = selectedScatterNames;
-    else if (type === 'collection') selectedNames = selectedCollectionNames;
-    else if (type === 'weekend') selectedNames = selectedWeekendNames;
-    else selectedNames = selectedVacationNames;
-
-    if (selectedNames.length === 0) return;
-    saveCheckpoint();
-    const newAssignments = { ...assignments };
-    let prefixToCheck: string | string[];
-    
-    if (type === 'scatter') prefixToCheck = 'scat-';
-    else if (type === 'collection') prefixToCheck = 'col-';
-    else if (type === 'weekend') prefixToCheck = ['fri-', 'sat-'];
-    else prefixToCheck = ['col-', 'stat-']; 
-    
-    Object.keys(newAssignments).forEach(key => { 
-        let match = false;
-        if (Array.isArray(prefixToCheck)) {
-            match = prefixToCheck.some(p => key.startsWith(p));
-        } else {
-            match = key.startsWith(prefixToCheck) || (type === 'collection' && key.startsWith('stat-'));
-        }
-
-        if (match && selectedNames.includes(newAssignments[key])) { 
-            delete newAssignments[key]; 
-        } 
-    });
-    
-    setAssignments(newAssignments);
-    
-    if (type === 'scatter') { 
-        const newPool = [...scatterPoolList, ...selectedNames];
-        setScatterPoolList(newPool); 
-        setSelectedScatterNames([]); 
-        updateFirebaseLive({ assignments: newAssignments, scatterPoolList: newPool });
-    } else if (type === 'collection') { 
-        const newPool = [...collectionPoolList, ...selectedNames];
-        setCollectionPoolList(newPool); 
-        setSelectedCollectionNames([]); 
-        updateFirebaseLive({ assignments: newAssignments, collectionPoolList: newPool });
-    } else if (type === 'weekend') {
-        const newPool = [...weekendPoolList, ...selectedNames];
-        setWeekendPoolList(newPool);
-        setSelectedWeekendNames([]);
-        updateFirebaseLive({ assignments: newAssignments, weekendPoolList: newPool });
-    } else if (type === 'vacation') {
-        const newPool = [...vacationPoolList, ...selectedNames];
-        setVacationPoolList(newPool);
-        setSelectedVacationNames([]);
-        updateFirebaseLive({ assignments: newAssignments, vacationPoolList: newPool });
-    }
   };
 
   const handleShareOrPrint = async () => {
@@ -1242,7 +1295,7 @@ const handleFridayDateChange = (val: string) => {
 
   const fetchHistory = async () => {
     try {
-      const q = query(collection(db, "history"), orderBy("createdAt", "desc"), limit(100)); // עודכן ל-100!
+      const q = query(collection(db, "history"), orderBy("createdAt", "desc"), limit(100)); 
       const snapshot = await getDocs(q);
       const list: any[] = [];
       snapshot.forEach(doc => { 
@@ -1266,8 +1319,8 @@ const handleFridayDateChange = (val: string) => {
         if(item.collectionDate) setCollectionDate(item.collectionDate);
         if(item.holidayDate) setHolidayDate(item.holidayDate);
         if(item.fridayDate) setFridayDate(item.fridayDate);
-        if(item.scatterPoolList) setScatterPoolList(item.scatterPoolList);
-        if(item.collectionPoolList) setCollectionPoolList(item.collectionPoolList);
+        if(item.scatterPools) { setScatterPools(item.scatterPools); } else if (item.scatterPoolList) { setScatterPools([{id: 'hist', names: item.scatterPoolList, color: 'bg-blue-600', position: {x:50, y:150}}]); }
+        if(item.collectionPools) { setCollectionPools(item.collectionPools); } else if (item.collectionPoolList) { setCollectionPools([{id: 'hist', names: item.collectionPoolList, color: 'bg-orange-600', position: {x: window.innerWidth - 300, y:150}}]); }
         if(item.weekendPoolList) setWeekendPoolList(item.weekendPoolList);
         if(item.highlightedNames) setHighlightedNames(item.highlightedNames);
         setIsHistoryMode(true); 
@@ -1382,7 +1435,7 @@ const handleFridayDateChange = (val: string) => {
       const preferredVehId = learnedPrefs[employeeName];
       if (preferredVehId) {
         const targetVeh = scatterMap.find(v => v.id === preferredVehId);
-        if (targetVeh && !targetVeh.isLocked && targetVeh.filled < targetVeh.capacity && !RESTRICTED_VEHICLES_FOR_LEFTOVERS.includes(targetVeh.id)) {
+        if (targetVeh && !targetVeh.isLocked && targetVeh.filled < targetVeh.capacity) {
           targetVeh.filled++; newAssignments[`${targetVeh.prefix}-${targetVeh.filled}`] = employeeName; assignedEmployees.add(employeeName);
         }
       }
@@ -1391,7 +1444,7 @@ const handleFridayDateChange = (val: string) => {
     const leftOvers = employeesToAssign.filter(name => !assignedEmployees.has(name));
     const stillUnassigned: string[] = [];
     if (leftOvers.length > 0) {
-      let availableVehicles = scatterMap.filter(v => !v.isLocked && !RESTRICTED_VEHICLES_FOR_LEFTOVERS.includes(v.id));
+      let availableVehicles = scatterMap.filter(v => !v.isLocked);
       leftOvers.forEach(workerName => {
         availableVehicles.sort((a, b) => a.filled - b.filled);
         let placed = false;
@@ -1409,20 +1462,24 @@ const handleFridayDateChange = (val: string) => {
       });
     }
     
-    const finalScatterPool = stillUnassigned.length > 0 ? 
-       [...new Set([...scatterPoolList, ...stillUnassigned])] : scatterPoolList;
+    let updatedPools = [...scatterPools];
+    if (stillUnassigned.length > 0) {
+        if (updatedPools.length === 0) {
+            updatedPools.push({ id: 'auto', names: stillUnassigned, color: SCATTER_COLORS[0], position: {x:50, y:150} });
+        } else {
+            updatedPools[0].names = [...new Set([...updatedPools[0].names, ...stillUnassigned])];
+        }
+    }
 
-    setScatterPoolList(finalScatterPool);
+    setScatterPools(updatedPools);
     setNotes(newNotes); 
     setAssignments(newAssignments);
     
     updateFirebaseLive({ 
         assignments: newAssignments, 
         notes: newNotes,
-        scatterPoolList: finalScatterPool
+        scatterPools: updatedPools
     });
-    
-    if (stillUnassigned.length > 0) setIsScatterPoolOpen(true);
   };
 
   const runCollectionAutomat = async () => {
@@ -1474,18 +1531,22 @@ const handleFridayDateChange = (val: string) => {
         if(!placed) stillUnassigned.push(workerName);
     });
 
-    const finalCollectionPool = stillUnassigned.length > 0 ? 
-       [...new Set([...collectionPoolList, ...stillUnassigned])] : collectionPoolList;
+    let updatedPools = [...collectionPools];
+    if (stillUnassigned.length > 0) {
+        if (updatedPools.length === 0) {
+            updatedPools.push({ id: 'auto', names: stillUnassigned, color: COLLECTION_COLORS[0], position: {x: window.innerWidth - 300, y: 150} });
+        } else {
+            updatedPools[0].names = [...new Set([...updatedPools[0].names, ...stillUnassigned])];
+        }
+    }
     
-    setCollectionPoolList(finalCollectionPool);
+    setCollectionPools(updatedPools);
     setAssignments(newAssignments);
     
     updateFirebaseLive({ 
         assignments: newAssignments, 
-        collectionPoolList: finalCollectionPool
+        collectionPools: updatedPools
     });
-
-    if (stillUnassigned.length > 0) setIsCollectionPoolOpen(true);
   };
 
   const copyCollectionToScatter = () => checkAuth(() => {
@@ -1529,15 +1590,25 @@ const handleFridayDateChange = (val: string) => {
     setAssignments(newAssignments);
     
     if(type === 'scatter') { 
-        const newPool = [...scatterPoolList, ...namesToMove];
-        setScatterPoolList(newPool); 
-        setIsScatterPoolOpen(true); 
-        updateFirebaseLive({ assignments: newAssignments, scatterPoolList: newPool });
+        const newPool: MultiPoolData = {
+            id: Date.now().toString(),
+            names: namesToMove,
+            color: SCATTER_COLORS[scatterPools.length % SCATTER_COLORS.length],
+            position: { x: 50 + scatterPools.length * 30, y: 150 + scatterPools.length * 30 }
+        };
+        const newPools = [...scatterPools, newPool];
+        setScatterPools(newPools); 
+        updateFirebaseLive({ assignments: newAssignments, scatterPools: newPools });
     } else { 
-        const newPool = [...collectionPoolList, ...namesToMove];
-        setCollectionPoolList(newPool); 
-        setIsCollectionPoolOpen(true); 
-        updateFirebaseLive({ assignments: newAssignments, collectionPoolList: newPool });
+        const newPool: MultiPoolData = {
+            id: Date.now().toString(),
+            names: namesToMove,
+            color: COLLECTION_COLORS[collectionPools.length % COLLECTION_COLORS.length],
+            position: { x: Math.max(0, window.innerWidth - 300 - collectionPools.length * 30), y: 150 + collectionPools.length * 30 }
+        };
+        const newPools = [...collectionPools, newPool];
+        setCollectionPools(newPools); 
+        updateFirebaseLive({ assignments: newAssignments, collectionPools: newPools });
     }
   });
 
@@ -1695,8 +1766,8 @@ const getCount = (prefix: string) => Object.entries(assignments).filter(([key, v
         scatterDate, collectionDate, holidayDate, fridayDate, collectionNote, scatterGeneralNote, personalNotes, holidayDaysCount,
         lastSavedBy: saverName,
         lastSavedAt: saveTime,
-        scatterPoolList,
-        collectionPoolList,
+        scatterPools,
+        collectionPools,
         weekendPoolList,
         vacationPoolList,
         highlightedNames
@@ -1711,8 +1782,8 @@ const getCount = (prefix: string) => Object.entries(assignments).filter(([key, v
         collectionDate,
         holidayDate,
         fridayDate,
-        scatterPoolList,
-        collectionPoolList,
+        scatterPools,
+        collectionPools,
         weekendPoolList,
         vacationPoolList,
         notes,
@@ -1758,8 +1829,13 @@ const getCount = (prefix: string) => Object.entries(assignments).filter(([key, v
         if(d.scatterGeneralNote) setScatterGeneralNote(d.scatterGeneralNote);
         if(d.personalNotes) setPersonalNotes(d.personalNotes);
         if(d.holidayDaysCount) setHolidayDaysCount(d.holidayDaysCount);
-        if(d.scatterPoolList) setScatterPoolList(d.scatterPoolList);
-        if(d.collectionPoolList) setCollectionPoolList(d.collectionPoolList);
+        
+        if(d.scatterPools) { setScatterPools(d.scatterPools); } 
+        else if (d.scatterPoolList?.length > 0) { setScatterPools([{id: 'migrated', names: d.scatterPoolList, color: 'bg-blue-600', position: {x: 50, y: 150}}]); } else { setScatterPools([]); }
+        
+        if(d.collectionPools) { setCollectionPools(d.collectionPools); } 
+        else if (d.collectionPoolList?.length > 0) { setCollectionPools([{id: 'migrated', names: d.collectionPoolList, color: 'bg-orange-600', position: {x: window.innerWidth - 300, y: 150}}]); } else { setCollectionPools([]); }
+
         if(d.weekendPoolList) setWeekendPoolList(d.weekendPoolList);
         if(d.vacationPoolList) setVacationPoolList(d.vacationPoolList || []);
         if (d.lastSavedBy && d.lastSavedAt) { setLastSavedInfo(`נשמר לאחרונה ע"י ${d.lastSavedBy} ב-${d.lastSavedAt}`); }
@@ -1978,17 +2054,17 @@ const getCount = (prefix: string) => Object.entries(assignments).filter(([key, v
            </button>
         </div>
       )}
-      {showUpdateModal && (
+{showUpdateModal && (
         <div className="fixed inset-0 z-[150] bg-black/80 flex items-center justify-center p-4">
           <div className="bg-white rounded-xl shadow-2xl p-8 max-w-md w-full text-center space-y-4 animate-in fade-in zoom-in duration-200">
             <div className="text-3xl mb-2">🚀</div>
             <h2 className="text-2xl font-black text-blue-900">עדכון מערכת חדש!</h2>
             <div className="text-right bg-blue-50 p-4 rounded-lg text-blue-900 text-sm space-y-2 border border-blue-100">
               <p className="font-bold border-b border-blue-200 pb-1 mb-2">מה חדש בעדכון הזה?</p>
-              <ul className="list-disc list-inside space-y-1">
-                <li>ספירת עובדים מדויקת (רק שמות עובדים נספרים בטבלאות).</li>
-                <li>אפשרות להעתקה והדבקה מהירה של שעות בשורה האחרונה (מקש ימני).</li>
-                <li>שיפורים כלליים ביציבות המערכת.</li>
+              <ul className="list-disc list-inside space-y-2">
+                <li><span className="font-bold">חלונות מרובים:</span> אפשרות לפתיחת מספר חלונות מאגר "זמני" בצבעים שונים כדי להקל על העבודה.</li>
+                <li><span className="font-bold">סדר וארגון:</span> סידור אוטומטי של הטבלה השלישית (נוכחות) באופן מאורגן "בטעם של אלון" (חופש תמיד ימוקם הכי ימינה).</li>
+                <li><span className="font-bold">דיוק ונוחות:</span> ספירת עובדים מדויקת בטבלאות והעתק-הדבק מהיר של שעות בשורה התחתונה עם מקש ימני.</li>
               </ul>
             </div>
             <button 
@@ -2257,8 +2333,8 @@ const getCount = (prefix: string) => Object.entries(assignments).filter(([key, v
                  {isLoggedIn && !isReadOnly && (
                     <div className="flex items-center gap-2 mr-4 no-print">
                       <button onClick={() => addVehicle('scatter')}><PlusCircle size={20} className="text-blue-600" /></button>
-                      <button onClick={() => setIsScatterPoolOpen(!isScatterPoolOpen)} className="text-blue-600 font-bold text-xs border border-blue-200 px-1 rounded">זמני</button>
-                      <button onClick={() => pullFromTableToPool('scatter')} className="bg-blue-100 text-blue-700 font-bold text-xs px-1 rounded">רוקן</button>
+                      <button onClick={() => openMultiPool('scatter')} className="text-blue-600 font-bold text-xs border border-blue-200 px-1 rounded hover:bg-blue-50">זמני</button>
+                      <button onClick={() => pullFromTableToPool('scatter')} className="bg-blue-100 text-blue-700 font-bold text-xs px-1 rounded hover:bg-blue-200">רוקן</button>
                       <button onClick={() => clearTable('scat-')} className="bg-red-100 text-red-600 p-1 rounded font-bold text-xs mr-2">מחק הכל</button>
                       <button onClick={copyCollectionToScatter} className="flex items-center gap-1 bg-amber-500 text-white font-bold text-xs px-3 py-1 rounded shadow-md hover:bg-amber-600 transition-colors" title="העתק נתונים מטבלת איסוף"><Copy size={14} /> העתק מאיסוף</button>
                       <button onClick={runScatterAutomat} className="flex items-center gap-1 bg-gradient-to-r from-green-500 to-emerald-600 text-white font-bold text-xs px-3 py-1 rounded shadow-md hover:scale-105 transition-transform mr-4"><Zap size={14} fill="white" /> אוטומט</button>
@@ -2319,20 +2395,20 @@ const getCount = (prefix: string) => Object.entries(assignments).filter(([key, v
                  )}
                  {isLoggedIn && !isReadOnly ? (
                   <input  
-type="text" 
-  placeholder="רכב כוננות 123" 
-  value={collectionNote || "רכב כוננות "} 
-  onChange={(e) => handleVehicleNoteChange(e.target.value)} 
-  className={`border-4 font-black text-xl rounded px-4 py-2 mr-2 w-64 shadow-lg focus:outline-none focus:ring-4 transition-colors duration-300 ${isVehicleSaved ? 'bg-red-500 text-white border-red-800 ring-red-300' : 'border-red-600 bg-red-50 text-red-700 ring-red-300'}`} 
-/>
+                    type="text" 
+                    placeholder="רכב כוננות 123" 
+                    value={collectionNote || "רכב כוננות "} 
+                    onChange={(e) => handleVehicleNoteChange(e.target.value)} 
+                    className={`border-4 font-black text-xl rounded px-4 py-2 mr-2 w-64 shadow-lg focus:outline-none focus:ring-4 transition-colors duration-300 ${isVehicleSaved ? 'bg-red-500 text-white border-red-800 ring-red-300' : 'border-red-600 bg-red-50 text-red-700 ring-red-300'}`} 
+                  />
                  ) : (<span className="font-bold text-red-600 text-xl border-2 border-red-500 bg-red-50 px-3 py-1 rounded ml-2 shadow-sm">{collectionNote}</span>)}
                  <h1 className="text-xl font-black text-blue-900">איסוף <span className="text-gray-500 text-lg font-normal">({getCount('col-')})</span></h1>
                  {isLoggedIn && !isReadOnly && (
                     <div className="flex items-center gap-2 mr-4 no-print">
                       <button onClick={() => addVehicle('collection')}><PlusCircle size={20} className="text-orange-600" /></button>
-                      <button onClick={() => setIsCollectionPoolOpen(!isCollectionPoolOpen)} className="text-orange-600 font-bold text-xs border border-orange-300 px-1 rounded bg-white">זמני</button>
-                      <button onClick={() => setIsGlobalPoolOpen(true)} className="text-white bg-blue-500 font-bold text-xs px-2 py-1 rounded flex items-center gap-1"><UserCheck size={12}/> מי לא שובץ?</button>
-                      <button onClick={() => pullFromTableToPool('collection')} className="bg-orange-100 text-orange-700 font-bold text-xs px-1 rounded border border-orange-200">רוקן</button>
+                      <button onClick={() => openMultiPool('collection')} className="text-orange-600 font-bold text-xs border border-orange-300 px-1 rounded bg-white hover:bg-orange-50">זמני</button>
+                      <button onClick={() => setIsGlobalPoolOpen(true)} className="text-white bg-blue-500 font-bold text-xs px-2 py-1 rounded flex items-center gap-1 hover:bg-blue-600"><UserCheck size={12}/> מי לא שובץ?</button>
+                      <button onClick={() => pullFromTableToPool('collection')} className="bg-orange-100 text-orange-700 font-bold text-xs px-1 rounded border border-orange-200 hover:bg-orange-200">רוקן</button>
                       <button onClick={() => clearTable('col-')} className="bg-red-100 text-red-600 p-1 rounded font-bold text-xs mr-2 border border-red-200">מחק הכל</button>
                       <button onClick={runCollectionAutomat} className="flex items-center gap-1 bg-gradient-to-r from-green-500 to-emerald-600 text-white font-bold text-xs px-3 py-1 rounded shadow-md hover:scale-105 transition-transform mr-4"><Zap size={14} fill="white" /> אוטומט</button>
                     </div>
@@ -2391,7 +2467,7 @@ type="text"
                      </div>
                    )}
                    
-                   {/* מנגנון גרירה ומיון - הפיצ'ר החדש */}
+                   {/* מנגנון גרירה ומיון */}
                    <div className="flex flex-row-reverse flex-nowrap gap-2 shrink-0">
                      {statusColumns.map((title, index) => {
                        const isDragging = draggingColIdx === index;
@@ -2441,10 +2517,50 @@ type="text"
                </div>
              </section>
              <SignatureFooter />
-             <FloatingPool title="מאגר פיזור" isOpen={isScatterPoolOpen} onClose={() => setIsScatterPoolOpen(false)} names={scatterPoolList} onRemoveName={(name) => removeFromPool('scatter', name)} onClearAll={() => clearPool('scatter')} onDropToPool={() => handleDropToPool('scatter')} color="bg-blue-600" initialPosition={{ x: 50, y: window.innerHeight - 300 }} selectedNames={selectedScatterNames} onToggleSelect={(name) => handleToggleSelect(name, 'scatter')} isReadOnly={isReadOnly} onAddManualName={(name) => handleAddManualName(name, 'scatter')} onAutoDistribute={runScatterAutomat} />
-             <FloatingPool title="מאגר איסוף" isOpen={isCollectionPoolOpen} onClose={() => setIsCollectionPoolOpen(false)} names={collectionPoolList} onRemoveName={(name) => removeFromPool('collection', name)} onClearAll={() => clearPool('collection')} onDropToPool={() => handleDropToPool('collection')} color="bg-orange-600" initialPosition={{ x: window.innerWidth - 300, y: window.innerHeight - 300 }} selectedNames={selectedCollectionNames} onToggleSelect={(name) => handleToggleSelect(name, 'collection')} isReadOnly={isReadOnly} onAddManualName={(name) => handleAddManualName(name, 'collection')} onAutoDistribute={runCollectionAutomat} />
              
-             {/* מאגר החופשות */}
+             {/* רינדור חלונות פיזור זמניים מרובים */}
+             {scatterPools.map(pool => (
+                <FloatingPool 
+                    key={pool.id}
+                    title="מאגר פיזור" 
+                    isOpen={true} 
+                    onClose={() => closeMultiPool('scatter', pool.id)} 
+                    names={pool.names} 
+                    onRemoveName={(name) => removeNameFromMultiPool('scatter', pool.id, name)} 
+                    onClearAll={() => clearMultiPool('scatter', pool.id)} 
+                    onDropToPool={() => dropToMultiPool('scatter', pool.id)} 
+                    color={pool.color} 
+                    initialPosition={pool.position} 
+                    selectedNames={selectedScatterNames} 
+                    onToggleSelect={(name) => handleToggleSelect(name, 'scatter')} 
+                    isReadOnly={isReadOnly} 
+                    onAddManualName={(name) => addManualNameToMultiPool('scatter', pool.id, name)} 
+                    onAutoDistribute={runScatterAutomat} 
+                />
+             ))}
+
+             {/* רינדור חלונות איסוף זמניים מרובים */}
+             {collectionPools.map(pool => (
+                <FloatingPool 
+                    key={pool.id}
+                    title="מאגר איסוף" 
+                    isOpen={true} 
+                    onClose={() => closeMultiPool('collection', pool.id)} 
+                    names={pool.names} 
+                    onRemoveName={(name) => removeNameFromMultiPool('collection', pool.id, name)} 
+                    onClearAll={() => clearMultiPool('collection', pool.id)} 
+                    onDropToPool={() => dropToMultiPool('collection', pool.id)} 
+                    color={pool.color} 
+                    initialPosition={pool.position} 
+                    selectedNames={selectedCollectionNames} 
+                    onToggleSelect={(name) => handleToggleSelect(name, 'collection')} 
+                    isReadOnly={isReadOnly} 
+                    onAddManualName={(name) => addManualNameToMultiPool('collection', pool.id, name)} 
+                    onAutoDistribute={runCollectionAutomat} 
+                />
+             ))}
+
+             {/* מאגר החופשות (נשאר יחיד) */}
              <FloatingPool 
                 title="מאגר חופשות" 
                 isOpen={isVacationPoolOpen} 
@@ -2452,7 +2568,7 @@ type="text"
                 names={vacationPoolList} 
                 onRemoveName={(name) => removeFromPool('vacation', name)} 
                 onClearAll={() => clearPool('vacation')} 
-                onDropToPool={() => handleDropToPool('vacation')} 
+                onDropToPool={() => dropToMultiPool('collection', 'vacation')} // fallback
                 color="bg-rose-600" 
                 initialPosition={{ x: window.innerWidth / 2, y: window.innerHeight - 300 }} 
                 selectedNames={selectedVacationNames} 
@@ -2528,7 +2644,7 @@ type="text"
                </div>
             </section>
             <SignatureFooter />
-            <FloatingPool title="מאגר סופ״ש" isOpen={isWeekendPoolOpen} onClose={() => setIsWeekendPoolOpen(false)} names={weekendPoolList} onRemoveName={(name) => removeFromPool('weekend', name)} onClearAll={() => clearPool('weekend')} onDropToPool={() => handleDropToPool('weekend')} color="bg-teal-600" initialPosition={{ x: window.innerWidth / 2 - 128, y: window.innerHeight - 300 }} selectedNames={selectedWeekendNames} onToggleSelect={(name) => handleToggleSelect(name, 'weekend')} isReadOnly={isReadOnly} onAddManualName={(name) => handleAddManualName(name, 'weekend')} />
+            <FloatingPool title="מאגר סופ״ש" isOpen={isWeekendPoolOpen} onClose={() => setIsWeekendPoolOpen(false)} names={weekendPoolList} onRemoveName={(name) => removeFromPool('weekend', name)} onClearAll={() => clearPool('weekend')} onDropToPool={() => dropToMultiPool('collection', 'weekend')} color="bg-teal-600" initialPosition={{ x: window.innerWidth / 2 - 128, y: window.innerHeight - 300 }} selectedNames={selectedWeekendNames} onToggleSelect={(name) => handleToggleSelect(name, 'weekend')} isReadOnly={isReadOnly} onAddManualName={(name) => handleAddManualName(name, 'weekend')} />
           </div>
         )}
 
@@ -2541,7 +2657,6 @@ type="text"
                const tableDate = dayIndex === 0 ? holidayDate : (notes[dateNoteKey] || "");
                const holidayName = HOLIDAYS_ISRAEL[tableDate];
 
-               // הנה התיקון הקריטי: מעבירים את ה-dayIndex לפונקציה כדי שתדע איזה תאריך לשמור
                const handleTableDateChange = (val: string) => {
                  if (dayIndex === 0) handleHolidayDateChange(val);
                  else handleNoteChange(dateNoteKey, val);
