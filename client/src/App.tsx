@@ -119,7 +119,7 @@ function App() {
   const [personalNotes, setPersonalNotes] = useState("");
   const [highlightedNames, setHighlightedNames] = useState<string[]>([]);
   const [showUpdateModal, setShowUpdateModal] = useState(false);
-  const APP_VERSION = "v1.2"; 
+  const APP_VERSION = "v1.3"; 
   
   useEffect(() => {
     const savedVersion = localStorage.getItem("appVersion");
@@ -145,23 +145,45 @@ function App() {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const printRef = useRef<HTMLDivElement>(null);
   
-  const allEmployees = [
+// רשימת עובדי הבסיס (ללא 07)
+  const baseEmployees = [
     "יוני", "אביתר", "שגיא", "יקיר", "חיים", "ישראל", "בתאל", "ששי", "מושיקו", "איציק", "גיא", "נגוסה",
-    "ישעיהו", "עבודי", "אדם", "מעיין", "עידו", "שהם", "וואפי", "משען", "עידן07", "עידן", "מאיה", "אפיק", "דבוש",
+    "ישעיהו", "עבודי", "אדם", "מעיין", "עידו", "שהם", "וואפי", "משען", "עידן", "מאיה", "אפיק", "דבוש",
     "יהודה", "ששון", "עדי", "גל", "אור", "רוני", "נעם", "שמעיה", "יניב", "נג'יב", "נתנאל", "גילי", "אילן",
     "בנימיני", "אלון", "אופיר", "בסט", "סויסה", "אביגדור", "שני", "סתיו", "קבילו", "מיכאל", "שלומית", "גבאי",
     "ספיר", "תומר", "סמרלי", "עמיהוד", "אושרת", "רותם", "אייל. ר", "קסלסי", "קנופ", "ברק", "זיד",
     "טופאן", "ענאן", "ספא", "דניאל", "אלפסה", "צמרת", "פיני", "מיכל", "אדי", "פיראס", "בני", "ליאור", "לירון",
-    "נויה", "גיטהון", "איתי", "בן עמי", "חגי", "יעקב", "באדי", "סיון", "טארק", "טאפש", "שירן", "שי", "סהר", "בתאל07"
+    "נויה", "גיטהון", "איתי", "בן עמי", "חגי", "יעקב", "באדי", "סיון", "טארק", "טאפש", "שירן", "שי", "סהר"
   ];
+
+  // יצירה אוטומטית של כלל העובדים כולל גרסת 07 לכל אחד
+  const allEmployees = useMemo(() => {
+    return baseEmployees.flatMap(name => [name, `${name}07`]);
+  }, []);
+
+  // יצירה אוטומטית של ההצלבות (כדי שהמערכת תדע ש"עובד" ו-"עובד07" הם אותו אדם)
+  const nameAliases = useMemo(() => {
+    const aliases: Record<string, string> = {};
+    baseEmployees.forEach(name => {
+      aliases[name] = `${name}07`;
+      aliases[`${name}07`] = name;
+    });
+    return aliases;
+  }, []);
+
+  // פונקציה שמחזירה את השם המקורי ללא ה-07
+  const getBaseName = (name: string) => {
+    if (!name) return "";
+    const trimmed = name.trim();
+    return trimmed.endsWith("07") ? trimmed.slice(0, -2) : trimmed;
+  };
+
   const weekendShifts: Record<string, string[]> = {
     "1": ["אביתר", "בסט", "משען", "אייל. ר", "אילן", "איציק", "שהם", "קסלסי", "בתאל", "גילי", "זיד", "יקיר", "ישעיהו", "נגוסה", "עידן", "עמיהוד", "רוני", "רותם", "שגיא", "תומר"],
     "2": ["קנופ", "אדם", "טאפש", "אפיק", "ברק", "גיא", "גיטהון", "וואפי", "טארק", "טופאן", "יהודה", "יוני", "מיכל", "שמעיה", "נויה", "נעם", "סיון", "ספא", "עידו", "סמרלי"],
     "3": ["אביגדור", "אור", "קבילו", "אושרת", "בן עמי", "איתי", "בני", "גל", "מאיה", "מיכאל", "ספיר", "סתיו", "עדי", "ענאן", "פיני", "צמרת", "בנימיני", "דניאל", "שני"],
     "4": ["אדי", "אופיר", "אלון", "דבוש", "באדי", "חגי", "חיים", "יניב", "יעקב", "ישראל", "ליאור", "לירון", "מושיקו", "נג'יב", "נתנאל", "סהר", "פיראס", "שי", "שירן", "שלומית", "ששי"]
   };
-  const nameAliases: Record<string, string> = { "עידן07": "עידן", "עידן": "עידן07", "בתאל07": "בתאל", "בתאל": "בתאל07" };
-  const getBaseName = (name: string) => { if (name === "עידן07") return "עידן"; if (name === "בתאל07") return "בתאל"; return name; };
 
   const [currentView, setCurrentView] = useState<'home' | 'holiday' | 'weekend'>('home');
   const initialVehicles = ["003", "501", "703", "403", "603", "450", "628", "401", "502", "679", "717", "301", "601", "702"];
@@ -1090,16 +1112,15 @@ function App() {
     alert(`נוספו ${shiftEmployees.length} עובדים למאגר הזמני של הסופ"ש.`);
   };
 
-  const unassignedEmployees = useMemo(() => {
-    const assignedSet = new Set<string>();
+const unassignedEmployees = useMemo(() => {
+    const assignedBaseNames = new Set<string>();
     Object.entries(assignments).forEach(([key, name]) => {
       if ((key.startsWith('col-') || key.startsWith('stat-')) && name.trim() !== "") {
-        assignedSet.add(name);
-        if (nameAliases[name]) assignedSet.add(nameAliases[name]);
+        assignedBaseNames.add(getBaseName(name));
       }
     });
-    return allEmployees.filter(emp => !assignedSet.has(emp));
-  }, [assignments, allEmployees]);
+    return baseEmployees.filter(emp => !assignedBaseNames.has(emp));
+  }, [assignments]);
 
   const handleToggleSelect = (name: string, context: 'scatter' | 'collection' | 'weekend' | 'global' | 'vacation') => {
     if (!isLoggedIn) return;
@@ -1499,7 +1520,7 @@ function App() {
     });
     
     const learnedPrefs = await getLearnedPreferences('collection');
-    const employeesToAssign = allEmployees.filter(name => !assignedOrStatus.has(name));
+    const employeesToAssign = baseEmployees.filter(name => !assignedOrStatus.has(name));
     const remainingAfterSmart = [];
     
     for (const workerName of employeesToAssign) {
@@ -1643,8 +1664,9 @@ const getCount = (prefix: string) => Object.entries(assignments).filter(([key, v
     return allEmployees.includes(value.trim()) || !!nameAliases[value.trim()];
   }).length;
 
-  const isDuplicate = (name: string, context: 'scatter' | 'combined') => {
+const isDuplicate = (name: string, context: 'scatter' | 'combined') => {
     if (!name || !name.trim()) return false;
+    const baseTarget = getBaseName(name);
     let count = 0;
     let prefixesToCheck: string[] = [];
     if (currentView === 'home') {
@@ -1654,7 +1676,7 @@ const getCount = (prefix: string) => Object.entries(assignments).filter(([key, v
     else if (currentView === 'weekend') prefixesToCheck = ['fri-', 'sat-'];
 
     Object.entries(assignments).forEach(([key, value]) => {
-      if (value === name && prefixesToCheck.some(p => key.startsWith(p))) count++;
+      if (value && getBaseName(value) === baseTarget && prefixesToCheck.some(p => key.startsWith(p))) count++;
     });
     if (currentView === 'weekend') return false;
     return count > 1;
@@ -1662,18 +1684,20 @@ const getCount = (prefix: string) => Object.entries(assignments).filter(([key, v
 
   const checkWeekendDuplicate = (name: string, type: 'fri' | 'sat') => {
     if (!name) return false;
+    const baseTarget = getBaseName(name);
     let count = 0;
     Object.entries(assignments).forEach(([key, value]) => {
-      if (value === name && key.startsWith(type + '-')) count++;
+      if (value && getBaseName(value) === baseTarget && key.startsWith(type + '-')) count++;
     });
     return count > 1;
   };
 
   const checkHolidayDuplicate = (name: string, dayPrefix: string) => {
     if (!name) return false;
+    const baseTarget = getBaseName(name);
     let count = 0;
     Object.entries(assignments).forEach(([key, value]) => {
-        if (value === name && key.startsWith(dayPrefix)) count++;
+        if (value && getBaseName(value) === baseTarget && key.startsWith(dayPrefix)) count++;
     });
     return count > 1;
   };
@@ -2062,9 +2086,7 @@ const getCount = (prefix: string) => Object.entries(assignments).filter(([key, v
             <div className="text-right bg-blue-50 p-4 rounded-lg text-blue-900 text-sm space-y-2 border border-blue-100">
               <p className="font-bold border-b border-blue-200 pb-1 mb-2">מה חדש בעדכון הזה?</p>
               <ul className="list-disc list-inside space-y-2">
-                <li><span className="font-bold">חלונות מרובים:</span> אפשרות לפתיחת מספר חלונות מאגר "זמני" בצבעים שונים כדי להקל על העבודה.</li>
-                <li><span className="font-bold">סדר וארגון:</span> סידור אוטומטי של הטבלה השלישית (נוכחות) באופן מאורגן "בטעם של אלון" (חופש תמיד ימוקם הכי ימינה).</li>
-                <li><span className="font-bold">דיוק ונוחות:</span> ספירת עובדים מדויקת בטבלאות והעתק-הדבק מהיר של שעות בשורה התחתונה עם מקש ימני.</li>
+                <li><span className="font-bold">איסוף 07 לכל עובד:</span> מעכשיו ניתן להוסיף סיומת 07 לכל עובד במערכת, והמערכת תזהה אוטומטית שמדובר באותו אדם (תבקשו אתגר יותר קשה).</li>
               </ul>
             </div>
             <button 
